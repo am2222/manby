@@ -392,14 +392,14 @@ impl Value<'_> {
 /// Increasing offsets in 4 bytes each, and where they pass each multiple
 /// of 2^32.
 #[derive(Clone, Default, PartialEq, Eq)]
-struct Ends {
+pub(crate) struct Ends {
     low: Buf<u32>,
     /// For each multiple of 2^32 passed, the first offset past it.
     wraps: Vec<u32>,
 }
 
 impl Ends {
-    fn get(&self, i: usize) -> u64 {
+    pub(crate) fn get(&self, i: usize) -> u64 {
         let hi = if self.wraps.is_empty() {
             0
         } else {
@@ -408,14 +408,14 @@ impl Ends {
         (hi as u64) << 32 | self.low[i] as u64
     }
 
-    fn push(&mut self, e: u64) {
+    pub(crate) fn push(&mut self, e: u64) {
         while self.wraps.len() < (e >> 32) as usize {
             self.wraps.push(self.low.len() as u32);
         }
         self.low.push(e as u32);
     }
 
-    fn reserve(&mut self, n: usize) {
+    pub(crate) fn reserve(&mut self, n: usize) {
         self.low.reserve(n);
     }
 }

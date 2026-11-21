@@ -19,7 +19,7 @@ use tippecanoe::text::fnv1a;
 
 use super::util::{Helpers, par_ranges};
 use crate::buf::Buf;
-use crate::store::Values;
+use crate::store::{Ends, Values};
 
 /// The size of tippecanoe's key dedup cache.
 const DEDUP_SLOTS: u64 = 65536;
@@ -76,7 +76,11 @@ pub fn encode_value(v: &MvtValue) -> Option<Vec<u8>> {
 /// The encodings of the store's attribute values, and their order by those bytes.
 pub struct ValueCodes {
     bytes: Buf<u8>,
-    off: Buf<u32>,
+    /// Where each value's encoding starts, and one past the last: offsets
+    /// into `bytes`, which can pass 4 GiB on a large store, so they are kept
+    /// as `Ends`, 4 bytes each and correct past 2^32, as `Values` keeps its
+    /// strings'.
+    off: Ends,
     /// Equal for values with equal encodings.
     rank: Buf<u32>,
 }
@@ -104,16 +108,17 @@ impl ValueCodes {
             })
             .collect();
         let mut bytes = Buf::with_capacity(encoded.iter().map(|e| e.0.len()).sum());
-        let mut off = Buf::with_capacity(n + 1);
+        let mut off = Ends::default();
+        off.reserve(n + 1);
         for (b, lens) in encoded {
-            let mut at = bytes.len() as u32;
+            let mut at = bytes.len() as u64;
             for &l in lens.iter() {
                 off.push(at);
-                at += l;
+                at += u64::from(l);
             }
             bytes.extend_from_slice(&b);
         }
-        off.push(bytes.len() as u32);
+        off.push(bytes.len() as u64);
 
         let mut codes = ValueCodes {
             bytes,
@@ -159,7 +164,8 @@ impl ValueCodes {
     }
 
     fn get(&self, v: u32) -> &[u8] {
-        &self.bytes[self.off[v as usize] as usize..self.off[v as usize + 1] as usize]
+        let v = v as usize;
+        &self.bytes[self.off.get(v) as usize..self.off.get(v + 1) as usize]
     }
 }
 
