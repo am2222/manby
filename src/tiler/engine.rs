@@ -14,6 +14,7 @@ use tippecanoe::tile::Strategy;
 
 use super::encode::{ValueCodes, key_slot};
 use super::make::{MakeParams, MakeResult, Thresholds, dropping_features, make_tile};
+use super::progress::Reporter;
 use super::read::{Parked, ReadParams, TileInput, read_tile, store_inputs};
 use super::util::Helpers;
 use super::{TileOptions, TileStats};
@@ -802,6 +803,7 @@ struct Driver<'d, 's> {
     error: Option<Error>,
     timing: bool,
     started: std::time::Instant,
+    progress: Reporter,
     /// `-at`: levels are made one after the other, since whether a tile is
     /// made depends on the outcome of its parent's level.
     variable_depth: bool,
@@ -852,6 +854,7 @@ pub fn drive<'s>(
         error: None,
         timing: o.timing,
         started: std::time::Instant::now(),
+        progress: Reporter::new(o.progress, o.progress_interval),
         variable_depth: o.a(A_VARIABLE_DEPTH_PYRAMID),
         running_big: 0,
         big_memory: o.big_memory as u64,
@@ -1313,8 +1316,31 @@ impl<'d, 's> Driver<'d, 's> {
                 slot.flags |= MUST_GO_ON;
             }
         }
+        let (z, x, y) = (level.z, slot.input.x, slot.input.y);
         level.fold(idx, result, self.ctx.o.drop_by_attribute_descending);
         self.check_pass(k);
+        if self.progress.enabled() {
+            let share = self.share_done();
+            self.progress.report(share, z, x, y);
+        }
+    }
+
+    /// How far the tiling has got, from 0 to 1, as tippecanoe counts it: the
+    /// zoom levels finished, out of those up to the maximum zoom, and the
+    /// share of the first unfinished one made, each pass over a level taking
+    /// a part of it. Levels further on that run ahead are not counted.
+    fn share_done(&self) -> f64 {
+        let Some(l) = self.levels.iter().find(|l| !l.done) else {
+            return 1.0;
+        };
+        let len = l.slots.len();
+        let made = if l.started && l.inputs_complete && len > 0 {
+            (len - l.missing.min(len)) as f64 / len as f64
+        } else {
+            0.0
+        };
+        let passes = (l.pass + 1) as f64;
+        (l.z as f64 + (l.pass as f64 + made) / passes) / (self.maxzoom + 1) as f64
     }
 
     fn check_pass(&mut self, k: usize) {
